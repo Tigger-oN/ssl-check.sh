@@ -1,0 +1,12 @@
+# A sample of domains for testing ssl-check.sh
+# Each domain should have a space between them, or be on a new line.
+# Blank lines and lines that start with a "#" character are ignored.
+
+# Single line options ...
+www.eff.org developer.mozilla.org
+
+# ... and line return options are supported
+github.com
+bandcamp.com
+efa.org.au
+
