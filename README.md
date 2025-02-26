@@ -4,10 +4,10 @@ Check the dates and issuer information of any number of SSL certificates.
 
 Usage:
 
- ssl-check.sh
- ssl-check.sh domain.name [ domain2.name... ]
- ssl-check.sh -f /path/to/domain/list
- ssl-check.sh [ -h | -v ] 
+    ssl-check.sh
+    ssl-check.sh domain.name [ domain2.name... ]
+    ssl-check.sh -f /path/to/domain/list
+    ssl-check.sh [ -h | -v ] 
 
 With no options passed, a "default list" of domains will be checked. Add any
 number of domains to the following file to populate the default list.
