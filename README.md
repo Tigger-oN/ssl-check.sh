@@ -1,6 +1,6 @@
 # ssl-check.sh
 
-Check the dates and issuer information of any number of SSL certificates.
+Check the end date and issuer information of any number of SSL certificates.
 
 Usage:
 
@@ -16,7 +16,7 @@ number of domains to the following file to populate the default list.
 
 If a list of domains are passed in, that list will be checked instead.
 
-You can specify a file to be used instead with:
+You can specify a file of domains with:
 
     -f /path/to/domain/list
 

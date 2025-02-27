@@ -1,9 +1,12 @@
 #!/bin/sh
 #
 # Show date information for a SSL cert.
+#
+# TODO: Add -ext subjectAltName so we can obtain the full list of supported
+# domains.
 
 # Script version
-VERSION="20250226"
+VERSION="20250227"
 # The location of the default domain list.
 DEFAULT_LIST_FILE="${HOME}/.${0##*/}.list"
 # Will be populated if needed.
@@ -11,6 +14,8 @@ LIST_FILE=""
 # Used to work out the number of days
 TODAY=`TZ=GMT date +%s`
 DAYS=""
+# Because `date` is non-standard
+OS=`uname`
 
 usage () {
 	app=${0##*/}
@@ -21,7 +26,7 @@ usage () {
 		defaultList="No file found."
 	fi
 	out="
-Check the dates and issuer information of any number of SSL certificates.
+Check the end date and issuer information of any number of SSL certificates.
 
 Usage:
 
@@ -37,9 +42,11 @@ number of domains to the following file to populate the default list.
 
 If a list of domains are passed in, that list will be checked instead.
 
-You can specify a file to be used instead with \"-f /path/to/domain/list\".  
+You can specify a file of domains with:
 
-This help can be shown with either \"-h\" or \"-v\" and will also be shown if 
+ \"-f /path/to/domain/list\"
+
+This help can be shown with either \"-h\" or \"-v\" and will also be shown if
 there are no arguments and the \"default list\" file does not exists.
 
 Domain name file lists should be seperated by a space or a line return. You can
@@ -107,8 +114,20 @@ getDays () {
 		DAYS=""
 		return
 	fi
-	# Confirmed "%e" (no leading 0) is correct for the day.
-	expireDate=`TZ=GMT date -j -f "%b %e %T %Y %Z" "${notAfter}" "+%s" 2> /dev/null`
+	# date is OS dependent.
+	if [ "${OS}" = "FreeBSD" ]
+	then
+		# Highly possible that Darwin would be the same here. Currently untested.
+		# Confirmed "%e" (no leading 0) is correct for the day.
+		expireDate=`TZ=GMT date -j -f "%b %e %T %Y %Z" "${notAfter}" "+%s" 2> /dev/null`
+	elif [ "${OS}" = "Linux" ]
+	then
+		expireDate=`date -d "${notAfter}" "+%s" 2> /dev/null`
+	else
+		# Because we can not trust `date` :(
+		DAYS=""
+		return
+	fi
 	if [ -z "${expireDate}" ]
 	then
 		DAYS=" (Unable to confirm days)"
