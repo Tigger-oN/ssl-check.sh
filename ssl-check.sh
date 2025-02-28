@@ -2,15 +2,17 @@
 #
 # Show date information for a SSL cert.
 #
-# TODO: Add -ext subjectAltName so we can obtain the full list of supported
-# domains.
 
 # Script version
-VERSION="20250227"
+VERSION="20250228"
 # The location of the default domain list.
 DEFAULT_LIST_FILE="${HOME}/.${0##*/}.list"
-# Will be populated if needed.
-LIST_FILE=""
+# Show subject alternative names. Defaults to "no" (not shown).
+ALT_NAMES="no"
+# Will be populated when needed.
+REQUEST_FILE=""
+REQUEST_LIST=""
+LIST=""
 # Used to work out the number of days
 TODAY=`TZ=GMT date +%s`
 DAYS=""
@@ -26,33 +28,36 @@ usage () {
 		defaultList="No file found."
 	fi
 	out="
-Check the end date and issuer information of any number of SSL certificates.
+Check the end date and issuer information of SSL certificates.
 
 Usage:
 
- ${app}
- ${app} domain.name [ domain2.name... ]
- ${app} -f /path/to/domain/list
- ${app} [ -h | -v ] 
+ ${app} 
+ ${app} [ -a | -f file ] [ domain... ]
+ ${app} [ -h | -v ]
 
 With no options passed, a \"default list\" of domains will be checked. Add any
 number of domains to the following file to populate the default list.
 
  \"${DEFAULT_LIST_FILE}\"
 
-If a list of domains are passed in, that list will be checked instead.
+ -a      : Include the alternative subject names in the output.
+ -f file : Check the list of domains in \"file\".
+ domain  : One or more domain names to check.
 
-You can specify a file of domains with:
+ -h | -v : Show this help.
 
- \"-f /path/to/domain/list\"
-
-This help can be shown with either \"-h\" or \"-v\" and will also be shown if
-there are no arguments and the \"default list\" file does not exists.
+If there are no arguments and the \"default list\" file does not exist, this
+help will also be shown.
 
 Domain name file lists should be seperated by a space or a line return. You can
 use a \"#\" at the beginning of a line for a comment if needed.
 
-Default domain list information.
+The \"-f file\" option can be used alongside passed in domain names. The domains
+passed in will appear at the end of the list.
+
+Default list information.
+
  Location: ${DEFAULT_LIST_FILE}
    Status: ${defaultList}
 
@@ -82,6 +87,16 @@ At list one domain name is needed.
 	exit
 }
 
+invalidAltRequest () {
+	out="
+At least one domain name is required with the \"-a\" flag. The domain name can 
+be in the default list, a file (request with \"-f file\") or passed in on the 
+command line.
+"
+	printf "%s\n" "${out}"
+	exit 
+}
+
 listIsEmpty () {
 	out="
 Somehow we have an empty list of domains to check. As there is nothing to 
@@ -93,14 +108,13 @@ happened.
 }
 
 listFromFile () {
-	if [ -f "${LIST_FILE}" ]
+	if [ -f "${REQUEST_FILE}" ]
 	then
-		LIST=`grep -v '^#\|^[[:space:]]*#\|^[[:space:]]*$' "${LIST_FILE}"`
+		LIST=`grep -v '^#\|^[[:space:]]*#\|^[[:space:]]*$' "${REQUEST_FILE}"`
 	fi
 }
 
 listFromArg () {
-	LIST=""
 	for d in $@
 	do
 		LIST="${LIST}
@@ -154,56 +168,93 @@ getDays () {
 	fi
 }
 
-# What type of request was made.
-if [ "${1}" = "-h" -o "${1}" = "-v" ]
+# What options have been requetsed?
+if [ -n "${1}" ]
 then
-	usage
-elif [ -z "${1}" -a ! -f "${DEFAULT_LIST_FILE}" ]
-then
-	usage
-elif [ -z "${1}" -a -f "${DEFAULT_LIST_FILE}" ]
-then
-	LIST_FILE="${DEFAULT_LIST_FILE}"
-	listFromFile
-elif [ "${1}" = "-f" -a -z "${2}" ]
-then
-	invalidFilePath
-elif [ "${1}" = "-f" -a ! -f "${2}" ]
-then
-	invalidFilePath
-elif [ "${1}" = "-f" -a -f "${2}" ]
-then
-	LIST_FILE="${2}"
-	listFromFile
-elif [ -z "${1}" ]
-then
-	usage
-else
-	# Must be a list of domains
-	listFromArg $@
+	# At least one option to check
+	while getopts "ahf:v" opt
+	do
+		case "${opt}" in
+			a) ALT_NAMES="yes" ;;
+			h|v) usage ;;
+			f) REQUEST_FILE="${OPTARG}" ;;
+		esac
+	done
+	shift $((OPTIND - 1))
+	REQUEST_LIST=$*
 fi
 
-# Should not be possible, but check anyway
+# Nothing to do check
+if [ -z "${REQUEST_LIST}" -a -z "${REQUEST_FILE}" -a ! -f "${DEFAULT_LIST_FILE}" ]
+then
+	usage
+fi
+
+# Default list check
+if [ -z "${REQUEST_LIST}" -a -z "${REQUEST_FILE}" -a -f "${DEFAULT_LIST_FILE}" ]
+then
+	REQUEST_FILE="${DEFAULT_LIST_FILE}"
+	listFromFile
+else
+	# We can support both a file list and passed in domains like this. File
+	# list must be done first.
+	if [ -n "${REQUEST_FILE}" ]
+	then
+		if [ -f "${REQUEST_FILE}" ]
+		then
+			listFromFile
+			if [ -z "${LIST}" ]
+			then
+				invalidFileEmpty
+			fi
+		else
+			invalidFilePath
+		fi
+	fi
+	if [ -n "${REQUEST_LIST}" ]
+	then
+		listFromArg $@
+	fi
+fi
+
+# Sanity checks
 if [ -z "${LIST}" ]
 then
-	listIsEmpty
+	if [ "${ALT_NAMES}" = "yes" ]
+	then
+		invalidAltRequest 
+	else
+		listIsEmpty
+	fi
 fi
 
+# Main logic
 for s in ${LIST}
 do
 	printf "\nChecking ${s}"
-	raw=`yes | openssl s_client -connect ${s}:443 2> /dev/null | openssl x509 -noout -subject -dates -issuer 2> /dev/null | grep "^subject=\|^notAfter=\|^issuer="`
-	subject=`printf "%s" "${raw}" | grep "^subject=.*CN = .*" | sed 's/subject=.*CN = //g'`
-	notAfter=`printf "%s" "${raw}" | grep "^notAfter=.*" | sed 's/notAfter=//g'`
-	issuerCountry=`printf "%s" "${raw}" | grep "^issuer=C.*" | sed 's/^issuer=C = //g; s/,.*//g'`
-	issuerOrg=`printf "%s" "${raw}" | grep "^issuer=C.*, O = " | sed 's/^issuer=C.*, O = //g; s/,.*//g'`
-	issuerCommon=`printf "%s" "${raw}" | grep "^issuer=C.*, CN = " | sed 's/^issuer=C.*, CN = //g; s/,.*//g'`
-	# How soon does the cert expire?
+	raw=`yes | openssl s_client -connect ${s}:443 2> /dev/null | openssl x509 -noout -text -ext subjectAltNames 2> /dev/null | sed 's/^[[:space:]]*//g'`
+	subject=`printf "%s" "${raw}" | grep "^Subject: " | sed 's/.* CN = //g; s/,.*//'`
+	notAfter=`printf "%s" "${raw}" | grep "^Not After : " | sed 's/Not After : //'`
+	issuerCountry=`printf "%s" "${raw}" | grep "^Issuer: " | sed 's/.* C = //; s/,.*//'`
+	issuerOrg=`printf "%s" "${raw}" | grep "^Issuer: " | sed 's/.* O = //; s/,.*//'`
+	issuerCommon=`printf "%s" "${raw}" | grep "^Issuer: " | sed 's/.* CN = //; s/,.*//'`
+	if [ -n "${subject}" -a "${ALT_NAMES}" = "yes" ]
+	then
+		altNames=`printf "%s" "${raw}" | grep -A1 "^X509v3 Subject Alternative Name:" | grep -o "DNS:.*" | sed 's/DNS://g'`
+		if [ -z "${altNames}" ]
+		then
+			altNames="n/a"
+		fi
+		subject="${subject}
+Alt. names: ${altNames}"
+	fi
 	if [ -z "${subject}" ]
 	then
 		printf "\rUnable to obtain an SSL certificate for %s\n" "${s}"
 	else
+		# How soon does the cert expire?
 		getDays
+		# Display
 		printf "\r   SSL for: %s\n\
    Subject: %s\n\
  Not after: %s%s\n\
