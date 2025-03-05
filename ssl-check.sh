@@ -1,10 +1,9 @@
 #!/bin/sh
 #
 # Show date information for a SSL cert.
-#
 
 # Script version
-VERSION="20250228"
+VERSION="20250305"
 # The location of the default domain list.
 DEFAULT_LIST_FILE="${HOME}/.${0##*/}.list"
 # Show subject alternative names. Defaults to "no" (not shown).
@@ -18,6 +17,12 @@ TODAY=`TZ=GMT date +%s`
 DAYS=""
 # Because `date` is non-standard
 OS=`uname`
+# Used with an error
+ERR_MSG=""
+# Has the script been run from a cron job?
+CRON_JOB="no"
+# tput support?
+TPUT_CMD="no"
 
 usage () {
 	app=${0##*/}
@@ -32,20 +37,20 @@ Check the end date and issuer information of SSL certificates.
 
 Usage:
 
- ${app} 
- ${app} [ -a | -f file ] [ domain... ]
+ ${app} [ -a ] [ -f file ] [ domain... ]
  ${app} [ -h | -v ]
+
+Options:
+
+ -a      : Include the alternative subject names in the output.
+ -f file : Check the list of domains in \"file\".
+ domain  : One or more domain names to check.
+ -h | -v : Show this help.
 
 With no options passed, a \"default list\" of domains will be checked. Add any
 number of domains to the following file to populate the default list.
 
  \"${DEFAULT_LIST_FILE}\"
-
- -a      : Include the alternative subject names in the output.
- -f file : Check the list of domains in \"file\".
- domain  : One or more domain names to check.
-
- -h | -v : Show this help.
 
 If there are no arguments and the \"default list\" file does not exist, this
 help will also be shown.
@@ -67,44 +72,36 @@ Version: ${VERSION}
 	exit
 }
 
-invalidFilePath () {
-	out="
-A request to use a list of domains in a file was made, but the path to that
-file is not valid. Please check and try again.
-"
-	printf "%s\n" "${out}"
+error () {
+	printf "\n%s\n\n" "${ERR_MSG}"
 	exit
 }
+invalidFilePath () {
+	ERR_MSG="A request to use a list of domains in a file was made, but the path to that
+file is not valid.
 
+Please check the file path and try again."
+	error
+}
 invalidFileEmpty () {
-	out="
-A request to use a list of domains in a file was made, but there are no domains
+	ERR_MSG="A request to use a list of domains in a file was made, but there are no domains
 located within that file.
 
-At list one domain name is needed.
-"
-	printf "%s\n" "${out}"
-	exit
+At list one domain name is needed."
+	error
 }
-
 invalidAltRequest () {
-	out="
-At least one domain name is required with the \"-a\" flag. The domain name can 
-be in the default list, a file (request with \"-f file\") or passed in on the 
-command line.
-"
-	printf "%s\n" "${out}"
-	exit 
-}
+	ERR_MSG="At least one domain name is required with the \"-a\" flag.
 
+The domain name or names can be in the default list, a file, or passed in on
+the command line."
+	error
+}
 listIsEmpty () {
-	out="
-Somehow we have an empty list of domains to check. As there is nothing to 
+	ERR_MSG="Somehow we have an empty list of domains to check. As there is nothing to 
 check, there is also nothing to do other than to try and work out how this has
-happened.
-"
-	printf "%s\n" "${out}"
-	exit
+happened."
+	error
 }
 
 listFromFile () {
@@ -167,6 +164,27 @@ getDays () {
 		fi
 	fi
 }
+startedFromCron () {
+	ppid=`ps -p $$ -o ppid=`
+	owner=`ps -p ${ppid} -o comm=`
+	if [ "${owner}" = "cron" -o "${owner}" = "crond" ]
+	then
+		CRON_JOB="yes"
+	fi
+}
+chkTput () {
+	if [ -n "`command -v tput`" ]
+	then
+		TPUT_CMD="yes"
+	fi
+}
+catchClean () {
+	if [ "${TPUT_CMD}" = "yes" -a "${CRON_JOB}" = "no" ]
+	then
+		tput cnorm
+	fi
+	exit 1
+}
 
 # What options have been requetsed?
 if [ -n "${1}" ]
@@ -228,10 +246,27 @@ then
 	fi
 fi
 
+# Check if started from a cronjob
+startedFromCron
+
+# Check for tput support
+chkTput
+if [ "${TPUT_CMD}" = "yes" -a "${CRON_JOB}" = "no" ]
+then
+	tput civis
+	# Correct the cursor if killed
+	trap catchClean INT TERM HUP QUIT
+fi
+
 # Main logic
 for s in ${LIST}
 do
-	printf "\nChecking ${s}"
+	if [ "${CRON_JOB}" = "yes" ]
+	then
+		printf "\n"
+	else
+		printf "\nChecking ${s}\r"
+	fi
 	raw=`yes | openssl s_client -connect ${s}:443 2> /dev/null | openssl x509 -noout -text -ext subjectAltNames 2> /dev/null | sed 's/^[[:space:]]*//g'`
 	subject=`printf "%s" "${raw}" | grep "^Subject: " | sed 's/.* CN = //g; s/,.*//'`
 	notAfter=`printf "%s" "${raw}" | grep "^Not After : " | sed 's/Not After : //'`
@@ -255,13 +290,18 @@ Alt. names: ${altNames}"
 		# How soon does the cert expire?
 		getDays
 		# Display
-		printf "\r   SSL for: %s\n\
+		printf "   SSL for: %s\n\
    Subject: %s\n\
  Not after: %s%s\n\
     Issuer: %s (%s)\n\
             %s\n" "${s}" "${subject}" "${notAfter}" "${DAYS}" "${issuerOrg}" "${issuerCountry}" "${issuerCommon}"
 	fi
 done
+
+if [ "${TPUT_CMD}" = "yes" -a "${CRON_JOB}" = "no" ]
+then
+	tput cnorm
+fi
 
 printf "\n"
 exit
